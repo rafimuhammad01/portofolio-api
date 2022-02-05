@@ -2,6 +2,8 @@ package user
 
 import (
 	"github.com/gin-gonic/gin"
+	"github.com/pkg/errors"
+	"github.com/rafimuhammad01/portofolio-api/internal/jwt"
 	"github.com/rafimuhammad01/portofolio-api/utils"
 	"github.com/sirupsen/logrus"
 	"net/http"
@@ -19,156 +21,215 @@ func NewHandler(service Service) *Handler {
 
 func (h *Handler) Login(c *gin.Context) {
 	var (
-		errors      []string
+		errorList   []string
 		requestBody LoginAPIRequest
 	)
 
 	// Input Validation
-	err := c.Bind(&requestBody)
+	err := c.ShouldBindJSON(&requestBody)
 	if err != nil {
-		errors = append(errors, err.Error())
+		errorList = append(errorList, err.Error())
 	}
 
 	if requestBody.Username == "" {
-		errors = append(errors, "username is required")
+		errorList = append(errorList, "username is required")
 	}
 
 	if requestBody.Password == "" {
-		errors = append(errors, "password is required")
+		errorList = append(errorList, "password is required")
 	}
 
-	if len(errors) != 0 {
-		c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
+	if len(errorList) != 0 {
+		c.JSON(http.StatusBadRequest, &LoginAPIResponse{
 			Status:  http.StatusBadRequest,
 			Message: "bad request",
-			Errors:  errors,
+			Errors:  errorList,
 		})
 		return
 	}
 
-	res, err := h.service.Login(requestBody)
-	if err != nil {
-		logrus.Error("[error] ", err)
+	accessToken, refreshToken, expAt, err := h.service.Login(requestBody.Username, requestBody.Password, c)
+	switch errors.Cause(err) {
+	case ErrInvalidUsernameOrPassword:
+		fallthrough
+	case ErrUserNotFound:
+		c.JSON(http.StatusUnauthorized, &LoginAPIResponse{
+			Status:  http.StatusUnauthorized,
+			Message: "unauthorized",
+			Errors:  []string{ErrInvalidUsernameOrPassword.Error()},
+		})
+		return
+	case ErrInternalServer:
+		logrus.Error("[error while using login service]", err.Error())
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
 
-	c.JSON(res.Status, res)
+	data := jwt.JWTAPIResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiredAt:    expAt,
+	}
+
+	c.JSON(http.StatusCreated, LoginAPIResponse{
+		Status:  http.StatusCreated,
+		Message: "success",
+		Data:    &data,
+	})
 }
 
 func (h *Handler) GetAllUser(c *gin.Context) {
 	res, err := h.service.List()
-	if err != nil {
-		logrus.Error("[error] ", err)
+	switch errors.Cause(err) {
+	case ErrUserNotFound:
+		res = &ListUser{
+			Users: []User{},
+			Count: 0,
+		}
+		return
+	case ErrInternalServer:
+		logrus.Error("[error while using list user service]", err.Error())
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
-	c.JSON(res.Status, res)
+
+	c.JSON(http.StatusOK, &ListUserAPIResponse{
+		Status:  http.StatusOK,
+		Message: "success",
+		Data:    res,
+	})
 }
 
 func (h *Handler) RegisterUser(c *gin.Context) {
 	var (
-		errors      []string
+		errorList   []string
 		requestBody CreateUserAPIRequest
 	)
 
 	// Input Validation
 	err := c.Bind(&requestBody)
 	if err != nil {
-		errors = append(errors, err.Error())
+		errorList = append(errorList, err.Error())
 	}
 
 	if requestBody.FullName == "" {
-		errors = append(errors, "full_name is required")
+		errorList = append(errorList, "full_name is required")
 	}
 
 	if requestBody.Username == "" {
-		errors = append(errors, "username is required")
+		errorList = append(errorList, "username is required")
 	}
 
 	if requestBody.Password == "" {
-		errors = append(errors, "password is required")
+		errorList = append(errorList, "password is required")
 	}
 
 	if requestBody.FullName != "" && len(requestBody.FullName) < 3 {
-		errors = append(errors, "full name should be greater than 3 characters")
+		errorList = append(errorList, "full name should be greater than 3 characters")
 	}
 
 	if requestBody.Username != "" && len(requestBody.Username) < 3 {
-		errors = append(errors, "username should be greater than 3 characters")
+		errorList = append(errorList, "username should be greater than 3 characters")
 	}
 
 	if requestBody.Password != "" && len(requestBody.Password) < 3 {
-		errors = append(errors, "password should be greater than 8 characters")
+		errorList = append(errorList, "password should be greater than 8 characters")
 	}
 
-	if len(errors) != 0 {
+	if len(errorList) != 0 {
 		c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
 			Status:  http.StatusBadRequest,
 			Message: "bad request",
-			Errors:  errors,
+			Errors:  errorList,
 		})
 		return
 	}
 
-	res, err := h.service.Create(requestBody)
-	if err != nil {
-		logrus.Error("[error] ", err)
+	res, err := h.service.Create(requestBody.Username, requestBody.FullName, requestBody.Password)
+	switch errors.Cause(err) {
+	case ErrUsernameAlreadyExist:
+		c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
+			Status:  http.StatusBadRequest,
+			Message: "bad request",
+			Errors:  []string{err.Error()},
+		})
+		return
+	case ErrInternalServer:
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
 
-	c.JSON(res.Status, res)
+	c.JSON(http.StatusCreated, &CreateUserAPIResponse{
+		Status:  http.StatusCreated,
+		Message: "success",
+		Data:    res,
+	})
 }
 
 func (h *Handler) GetUserByID(c *gin.Context) {
 	payload, err := utils.GetPayloadFromContext(c)
 	if err != nil {
-		logrus.Error("[error] ", err)
+		logrus.Error("[error while extracting context] ", err)
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
-
-	var (
-		errors []string
-	)
 
 	userID := payload.UserID
 
-	if len(errors) != 0 {
-		c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
-			Status:  http.StatusBadRequest,
-			Message: "bad request",
-			Errors:  errors,
-		})
-		return
-	}
-
 	res, err := h.service.Get(userID)
 	if err != nil {
+		if errors.Cause(err) == ErrUserNotFound {
+			c.JSON(http.StatusNotFound, GetUserByIDAPIResponse{
+				Status:  http.StatusNotFound,
+				Message: "not found",
+				Data:    &User{},
+			})
+			return
+		}
 		logrus.Error("[error] ", err)
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
 
-	c.JSON(res.Status, res)
+	c.JSON(http.StatusOK, GetUserByIDAPIResponse{
+		Status:  http.StatusOK,
+		Message: "success",
+		Data:    res,
+	})
 }
 
 func (h Handler) RefreshToken(c *gin.Context) {
-	var accessToken RefreshTokenAPIRequest
+	var refreshTokenBody RefreshTokenAPIRequest
 
-	if err := c.BindJSON(&accessToken); err != nil {
-		logrus.Error("[error] ", err)
+	if err := c.BindJSON(&refreshTokenBody); err != nil {
+		logrus.Error("[error while binding body to struct] ", err)
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
 
-	res, err := h.service.RefreshToken(accessToken.AccessToken)
-	if err != nil {
-		logrus.Error("[error] ", err)
+	accessToken, refreshToken, duration, err := h.service.RefreshToken(refreshTokenBody.RefreshToken, c)
+	switch errors.Cause(err) {
+	case jwt.ErrInvalidToken:
+		fallthrough
+	case jwt.ErrExpiredToken:
+		c.JSON(http.StatusUnauthorized, LoginAPIResponse{
+			Status:  http.StatusUnauthorized,
+			Message: "unauthorized",
+			Errors:  []string{err.Error()},
+		})
+	case jwt.ErrIntervalServer:
+		logrus.Error("[error while using refresh token service] ", err.Error())
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}
 
-	c.JSON(res.Status, res)
+	c.JSON(http.StatusOK, LoginAPIResponse{
+		Status:  http.StatusOK,
+		Message: "success",
+		Data: &jwt.JWTAPIResponse{
+			AccessToken:  accessToken,
+			RefreshToken: refreshToken,
+			ExpiredAt:    duration,
+		},
+	})
 }

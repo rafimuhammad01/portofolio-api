@@ -49,7 +49,7 @@ type LoginAPIRequest struct {
 	Password string `json:"password"`
 }
 
-type LoginResponse struct {
+type IDAndPassword struct {
 	ID       int    `json:"id"`
 	Password string `json:"password"`
 }
@@ -62,5 +62,5 @@ type LoginAPIResponse struct {
 }
 
 type RefreshTokenAPIRequest struct {
-	AccessToken string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }

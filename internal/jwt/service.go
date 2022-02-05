@@ -2,25 +2,18 @@ package jwt
 
 import (
 	"context"
-	"errors"
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
-	"strconv"
+	"github.com/pkg/errors"
 	"time"
 )
 
 // Service is an interface for managing tokens
 type Service interface {
-	// CreateToken creates a new token for a specific username and duration
 	CreateToken(username string, userID int, duration time.Duration) (string, time.Time, error)
-
-	// VerifyToken checks if the token is valid or not
 	VerifyToken(token string) (*Payload, error)
-
-	CreateRefreshToken(token string, duration time.Duration) (string, error)
-
-	GetRefreshToken(token string) (*Payload, string, error)
-
+	CreateRefreshToken(accessToken string, duration time.Duration, ctx context.Context) (string, error)
+	GetUserInformation(refreshToken string, ctx context.Context) (userID int, username string, err error)
 	LogoutUser(userID string) (string, error)
 }
 
@@ -42,7 +35,7 @@ func (s *service) VerifyToken(token string) (*Payload, error) {
 	keyFunc := func(token *jwt.Token) (interface{}, error) {
 		_, ok := token.Method.(*jwt.SigningMethodHMAC)
 		if !ok {
-			return nil, ErrInvalidToken
+			return nil, errors.Wrap(ErrInvalidToken, ErrInvalidToken.Error())
 		}
 		return []byte(s.secretKey), nil
 	}
@@ -51,14 +44,14 @@ func (s *service) VerifyToken(token string) (*Payload, error) {
 	if err != nil {
 		verr, ok := err.(*jwt.ValidationError)
 		if ok && errors.Is(verr.Inner, ErrExpiredToken) {
-			return nil, ErrExpiredToken
+			return nil, errors.Wrap(ErrExpiredToken, ErrExpiredToken.Error())
 		}
-		return nil, ErrInvalidToken
+		return nil, errors.Wrap(ErrInvalidToken, ErrInvalidToken.Error())
 	}
 
 	payload, ok := jwtToken.Claims.(*Payload)
 	if !ok {
-		return nil, ErrInvalidToken
+		return nil, errors.Wrap(ErrInvalidToken, ErrInvalidToken.Error())
 	}
 
 	return payload, nil
@@ -73,40 +66,23 @@ func (s *service) CreateToken(username string, userID int, duration time.Duratio
 	jwtToken := jwt.NewWithClaims(jwt.SigningMethodHS256, payload)
 	token, err := jwtToken.SignedString([]byte(s.secretKey))
 	if err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, errors.Wrap(ErrIntervalServer, err.Error())
 	}
 	return token, payload.ExpiredAt, nil
 }
 
-func (s *service) CreateRefreshToken(token string, duration time.Duration) (string, error) {
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
-		_, ok := token.Method.(*jwt.SigningMethodHMAC)
-		if !ok {
-			return nil, ErrInvalidToken
-		}
-		return []byte(s.secretKey), nil
-	}
-
-	jwtToken, err := jwt.ParseWithClaims(token, &Payload{}, keyFunc)
-	if err != nil {
-		verr, ok := err.(*jwt.ValidationError)
-		if !ok || !errors.Is(verr.Inner, ErrExpiredToken) {
-			return "", ErrInvalidToken
-		}
-	}
-
-	payload, ok := jwtToken.Claims.(*Payload)
-	if !ok {
-		return "", ErrInvalidToken
-	}
-
-	refreshToken, err := uuid.NewRandom()
+func (s *service) CreateRefreshToken(accessToken string, duration time.Duration, ctx context.Context) (string, error) {
+	payload, err := s.VerifyToken(accessToken)
 	if err != nil {
 		return "", err
 	}
 
-	ctx := context.Background()
-	err = s.repo.StoreRefreshToken(ctx, strconv.Itoa(payload.UserID), refreshToken.String(), duration)
+	refreshToken, err := uuid.NewUUID()
+	if err != nil {
+		return "", errors.Wrap(ErrIntervalServer, err.Error())
+	}
+
+	err = s.repo.StoreRefreshToken(refreshToken.String(), payload.UserID, payload.Username, duration, ctx)
 	if err != nil {
 		return "", err
 	}
@@ -114,39 +90,13 @@ func (s *service) CreateRefreshToken(token string, duration time.Duration) (stri
 	return refreshToken.String(), nil
 }
 
-func (s *service) GetRefreshToken(token string) (*Payload, string, error) {
-	keyFunc := func(token *jwt.Token) (interface{}, error) {
-		_, ok := token.Method.(*jwt.SigningMethodHMAC)
-		if !ok {
-			return nil, ErrInvalidToken
-		}
-		return []byte(s.secretKey), nil
-	}
-
-	jwtToken, err := jwt.ParseWithClaims(token, &Payload{}, keyFunc)
+func (s *service) GetUserInformation(refreshToken string, ctx context.Context) (userID int, username string, err error) {
+	userID, username, err = s.repo.GetRefreshToken(refreshToken, ctx)
 	if err != nil {
-		verr, ok := err.(*jwt.ValidationError)
-		if !ok || !errors.Is(verr.Inner, ErrExpiredToken) {
-			return nil, "", ErrInvalidToken
-		}
+		return 0, "", err
 	}
 
-	payload, ok := jwtToken.Claims.(*Payload)
-	if !ok {
-		return nil, "", ErrInvalidToken
-	}
-
-	ctx := context.Background()
-	refreshToken, err := s.repo.GetRefreshToken(ctx, strconv.Itoa(payload.UserID))
-	if err != nil {
-		return nil, "", err
-	}
-
-	if refreshToken == "" {
-		return nil, "", ErrInvalidToken
-	}
-
-	return payload, refreshToken, nil
+	return userID, username, nil
 }
 
 func (s *service) LogoutUser(userID string) (string, error) {

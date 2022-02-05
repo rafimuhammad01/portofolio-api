@@ -218,7 +218,7 @@ func (h Handler) RefreshToken(c *gin.Context) {
 			Errors:  []string{err.Error()},
 		})
 	case jwt.ErrIntervalServer:
-		logrus.Error("[error while using refresh token service] ", err.Error())
+		logrus.Error("[error while using refresh token service] ", err)
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
 	}

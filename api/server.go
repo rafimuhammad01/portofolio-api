@@ -2,7 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/rafimuhammad01/portofolio-api/db/postgre"
+	"github.com/rafimuhammad01/portofolio-api/db/postgres"
 	"github.com/rafimuhammad01/portofolio-api/db/redis"
 	jwt2 "github.com/rafimuhammad01/portofolio-api/internal/jwt"
 	user2 "github.com/rafimuhammad01/portofolio-api/internal/user"
@@ -35,7 +35,7 @@ var (
 
 func (s Server) Init() {
 	// Init DB
-	db := postgre.Init()
+	db := postgres.Init()
 	rdb := redis.Init()
 
 	// Init internal package

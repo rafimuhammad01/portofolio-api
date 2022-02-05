@@ -1,0 +1,1 @@
+DROP TABLE IF EXISTS jastip_member_roles;

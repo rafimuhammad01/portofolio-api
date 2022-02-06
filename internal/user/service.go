@@ -41,7 +41,7 @@ func (s service) List() (*ListUser, error) {
 func (s service) Create(username, fullName, password string) (*User, error) {
 	// Check Username Uniqueness
 	userByUsername, err := s.repo.GetByUsername(username)
-	if err != nil {
+	if err != nil && errors.Cause(err) != ErrUserNotFound {
 		return nil, err
 	}
 

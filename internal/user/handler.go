@@ -49,17 +49,15 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	accessToken, refreshToken, expAt, err := h.service.Login(requestBody.Username, requestBody.Password, c)
-	switch errors.Cause(err) {
-	case ErrInvalidUsernameOrPassword:
-		fallthrough
-	case ErrUserNotFound:
-		c.JSON(http.StatusUnauthorized, &LoginAPIResponse{
-			Status:  http.StatusUnauthorized,
-			Message: "unauthorized",
-			Errors:  []string{ErrInvalidUsernameOrPassword.Error()},
-		})
-		return
-	case ErrInternalServer:
+	if err != nil {
+		if errors.Cause(err) == ErrInvalidUsernameOrPassword || errors.Cause(err) == ErrUserNotFound {
+			c.JSON(http.StatusUnauthorized, &LoginAPIResponse{
+				Status:  http.StatusUnauthorized,
+				Message: "unauthorized",
+				Errors:  []string{ErrInvalidUsernameOrPassword.Error()},
+			})
+			return
+		}
 		logrus.Error("[error while using login service]", err.Error())
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
@@ -80,14 +78,13 @@ func (h *Handler) Login(c *gin.Context) {
 
 func (h *Handler) GetAllUser(c *gin.Context) {
 	res, err := h.service.List()
-	switch errors.Cause(err) {
-	case ErrUserNotFound:
-		res = &ListUser{
-			Users: []User{},
-			Count: 0,
+	if err != nil {
+		if errors.Cause(err) == ErrUserNotFound {
+			res = &ListUser{
+				Users: []User{},
+				Count: 0,
+			}
 		}
-		return
-	case ErrInternalServer:
 		logrus.Error("[error while using list user service]", err.Error())
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
@@ -132,7 +129,7 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 		errorList = append(errorList, "username should be greater than 3 characters")
 	}
 
-	if requestBody.Password != "" && len(requestBody.Password) < 3 {
+	if requestBody.Password != "" && len(requestBody.Password) < 8 {
 		errorList = append(errorList, "password should be greater than 8 characters")
 	}
 
@@ -146,17 +143,19 @@ func (h *Handler) RegisterUser(c *gin.Context) {
 	}
 
 	res, err := h.service.Create(requestBody.Username, requestBody.FullName, requestBody.Password)
-	switch errors.Cause(err) {
-	case ErrUsernameAlreadyExist:
-		c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
-			Status:  http.StatusBadRequest,
-			Message: "bad request",
-			Errors:  []string{err.Error()},
-		})
-		return
-	case ErrInternalServer:
-		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
-		return
+	if err != nil {
+		if errors.Cause(err) == ErrUsernameAlreadyExist {
+			c.JSON(http.StatusBadRequest, &CreateUserAPIResponse{
+				Status:  http.StatusBadRequest,
+				Message: "bad request",
+				Errors:  []string{ErrUsernameAlreadyExist.Error()},
+			})
+			return
+		} else {
+			logrus.Error("[error while using user service] ", err)
+			c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
+			return
+		}
 	}
 
 	c.JSON(http.StatusCreated, &CreateUserAPIResponse{
@@ -208,16 +207,22 @@ func (h Handler) RefreshToken(c *gin.Context) {
 	}
 
 	accessToken, refreshToken, duration, err := h.service.RefreshToken(refreshTokenBody.RefreshToken, c)
-	switch errors.Cause(err) {
-	case jwt.ErrInvalidToken:
-		fallthrough
-	case jwt.ErrExpiredToken:
-		c.JSON(http.StatusUnauthorized, LoginAPIResponse{
-			Status:  http.StatusUnauthorized,
-			Message: "unauthorized",
-			Errors:  []string{err.Error()},
-		})
-	case jwt.ErrIntervalServer:
+	if err != nil {
+		if errors.Cause(err) == jwt.ErrInvalidToken {
+			c.JSON(http.StatusUnauthorized, LoginAPIResponse{
+				Status:  http.StatusUnauthorized,
+				Message: "unauthorized",
+				Errors:  []string{jwt.ErrInvalidToken.Error()},
+			})
+			return
+		} else if errors.Cause(err) == jwt.ErrExpiredToken {
+			c.JSON(http.StatusUnauthorized, LoginAPIResponse{
+				Status:  http.StatusUnauthorized,
+				Message: "unauthorized",
+				Errors:  []string{jwt.ErrExpiredToken.Error()},
+			})
+			return
+		}
 		logrus.Error("[error while using refresh token service] ", err)
 		c.JSON(http.StatusInternalServerError, utils.InternalServerErrorHandler())
 		return
